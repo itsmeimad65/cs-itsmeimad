@@ -1,0 +1,21 @@
+[
+    {
+        "iconUrl": "https://www.free-sideplus.com/wp-content/uploads/2026/03/ontario-logo-dark-mode-2.webp",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/itsmeimad65/cs-itsmeimad",
+        "fileSize": 20293,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "itsmeimad"
+        ],
+        "tvTypes": [
+            "Movie"
+        ],
+        "version": 1,
+        "internalName": "FreeSidePlusProvider",
+        "description": "Watch Sidemen Side+ content for free",
+        "url": "https://raw.githubusercontent.com/itsmeimad65/cs-itsmeimad/builds/FreeSidePlusProvider.cs3",
+        "name": "FreeSidePlusProvider"
+    }
+]
