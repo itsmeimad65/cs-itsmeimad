@@ -11,7 +11,7 @@ class FreeSidePlusProvider : MainAPI() {
     override var name = "Free Side+"
     override val hasMainPage = true
     override var lang = "en"
-    override val supportedTypes = setOf(TvType.Others)
+    override val supportedTypes = setOf(TvType.TvSeries)
 
     private val wpApiUrl = "$mainUrl/wp-json/wp/v2"
 
@@ -70,7 +70,7 @@ class FreeSidePlusProvider : MainAPI() {
         // Create data string containing all payloads
         val dataJson = payloads.joinToString("|||")
 
-        return newMovieLoadResponse(title, url, TvType.Others, dataJson) {
+        return newMovieLoadResponse(title, url, TvType.TvSeries, dataJson) {
             this.posterUrl = posterUrl
             this.plot = description
             this.year = post.date.split("-").firstOrNull()?.toIntOrNull()
@@ -240,7 +240,7 @@ class FreeSidePlusProvider : MainAPI() {
         val title = this.titleRendered.cleanHtml()
         if (title.isEmpty()) return null
 
-        return newMovieSearchResponse(title, this.link, TvType.Others) {
+        return newMovieSearchResponse(title, this.link, TvType.TvSeries) {
             this.posterUrl = this@toSearchResponse.posterUrl
         }
     }
