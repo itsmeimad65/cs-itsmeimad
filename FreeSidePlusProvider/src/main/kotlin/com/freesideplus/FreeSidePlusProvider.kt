@@ -2,6 +2,8 @@ package com.freesideplus
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Base64
 
 class FreeSidePlusProvider : MainAPI() {
@@ -24,8 +26,8 @@ class FreeSidePlusProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val categoryId = request.data
-        val posts = app.get("$wpApiUrl/posts?categories=$categoryId&per_page=20&page=$page")
-            .parsedSafe<List<WPPost>>() ?: emptyList()
+        val response = app.get("$wpApiUrl/posts?categories=$categoryId&per_page=20&page=$page")
+        val posts = parsePostList(response.text)
 
         val items = posts.mapNotNull { post ->
             post.toSearchResponse()
@@ -35,8 +37,8 @@ class FreeSidePlusProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val posts = app.get("$wpApiUrl/posts?search=$query&per_page=50")
-            .parsedSafe<List<WPPost>>() ?: emptyList()
+        val response = app.get("$wpApiUrl/posts?search=$query&per_page=50")
+        val posts = parsePostList(response.text)
 
         return posts.mapNotNull { it.toSearchResponse() }
     }
@@ -45,23 +47,24 @@ class FreeSidePlusProvider : MainAPI() {
         // Extract post ID from URL
         val postId = url.split("/").filter { it.isNotEmpty() }.lastOrNull()?.let {
             // Try to get post by slug
-            val posts = app.get("$wpApiUrl/posts?slug=$it")
-                .parsedSafe<List<WPPost>>()
-            posts?.firstOrNull()?.id
+            val response = app.get("$wpApiUrl/posts?slug=$it")
+            val posts = parsePostList(response.text)
+            posts.firstOrNull()?.id
         } ?: throw ErrorLoadingException("Could not extract post ID")
 
-        val post = app.get("$wpApiUrl/posts/$postId").parsedSafe<WPPost>()
+        val response = app.get("$wpApiUrl/posts/$postId")
+        val post = parsePost(response.text)
             ?: throw ErrorLoadingException("Could not load post")
 
-        val title = post.getTitleRendered().cleanHtml()
-        val description = post.getExcerptRendered().cleanHtml()
-        val posterUrl = getMediaUrl(post.featured_media ?: 0)
+        val title = post.titleRendered.cleanHtml()
+        val description = post.excerptRendered.cleanHtml()
+        val posterUrl = getMediaUrl(post.featured_media)
 
         // Extract episode number from title if present (e.g., "#236" or "Episode 236")
         val episodeNumber = extractEpisodeNumber(title)
 
         // Parse video payloads from content
-        val payloads = parseDataPayloads(post.getContentRendered())
+        val payloads = parseDataPayloads(post.contentRendered)
 
         // Create data string containing all payloads
         val dataJson = payloads.joinToString("|||")
@@ -69,7 +72,7 @@ class FreeSidePlusProvider : MainAPI() {
         return newMovieLoadResponse(title, url, TvType.Movie, dataJson) {
             this.posterUrl = posterUrl
             this.plot = description
-            this.year = post.date?.split("-")?.firstOrNull()?.toIntOrNull()
+            this.year = post.date.split("-").firstOrNull()?.toIntOrNull()
         }
     }
 
@@ -148,11 +151,43 @@ class FreeSidePlusProvider : MainAPI() {
     }
 
     // Helper functions
-    private suspend fun getMediaUrl(mediaId: Int): String? {
+    private fun parsePostList(json: String): List<WPPost> {
         return try {
-            val media = app.get("$wpApiUrl/media/$mediaId")
-                .parsedSafe<WPMedia>()
-            media?.source_url
+            val jsonArray = JSONArray(json)
+            (0 until jsonArray.length()).mapNotNull { i ->
+                jsonObjectToWPPost(jsonArray.getJSONObject(i))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun parsePost(json: String): WPPost? {
+        return try {
+            jsonObjectToWPPost(JSONObject(json))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun jsonObjectToWPPost(obj: JSONObject): WPPost {
+        return WPPost(
+            id = obj.optInt("id"),
+            date = obj.optString("date"),
+            titleRendered = obj.optJSONObject("title")?.optString("rendered") ?: "",
+            contentRendered = obj.optJSONObject("content")?.optString("rendered") ?: "",
+            excerptRendered = obj.optJSONObject("excerpt")?.optString("rendered") ?: "",
+            link = obj.optString("link"),
+            featured_media = obj.optInt("featured_media")
+        )
+    }
+
+    private suspend fun getMediaUrl(mediaId: Int): String? {
+        if (mediaId == 0) return null
+        return try {
+            val response = app.get("$wpApiUrl/media/$mediaId")
+            val obj = JSONObject(response.text)
+            obj.optString("source_url").ifEmpty { null }
         } catch (e: Exception) {
             null
         }
@@ -190,33 +225,23 @@ class FreeSidePlusProvider : MainAPI() {
     }
 
     private suspend fun WPPost.toSearchResponse(): SearchResponse? {
-        val title = this.getTitleRendered().cleanHtml()
+        val title = this.titleRendered.cleanHtml()
         if (title.isEmpty()) return null
-        val posterUrl = getMediaUrl(this.featured_media ?: 0)
+        val posterUrl = getMediaUrl(this.featured_media)
 
-        return newMovieSearchResponse(title, this.link ?: "", TvType.Movie) {
+        return newMovieSearchResponse(title, this.link, TvType.Movie) {
             this.posterUrl = posterUrl
         }
     }
 
-    // Data models - using Map<String, Any?> for nested objects to avoid casting issues
+    // Data model
     data class WPPost(
-        val id: Int? = null,
-        val date: String? = null,
-        val title: Map<String, Any?>? = null,
-        val content: Map<String, Any?>? = null,
-        val excerpt: Map<String, Any?>? = null,
-        val link: String? = null,
-        val featured_media: Int? = null,
-        val categories: List<Int>? = null
-    ) {
-        fun getTitleRendered(): String = title?.get("rendered")?.toString() ?: ""
-        fun getContentRendered(): String = content?.get("rendered")?.toString() ?: ""
-        fun getExcerptRendered(): String = excerpt?.get("rendered")?.toString() ?: ""
-    }
-
-    data class WPMedia(
-        val id: Int? = null,
-        val source_url: String? = null
+        val id: Int,
+        val date: String,
+        val titleRendered: String,
+        val contentRendered: String,
+        val excerptRendered: String,
+        val link: String,
+        val featured_media: Int
     )
 }
