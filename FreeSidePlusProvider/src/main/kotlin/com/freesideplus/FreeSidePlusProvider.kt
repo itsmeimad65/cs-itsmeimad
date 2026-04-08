@@ -53,15 +53,15 @@ class FreeSidePlusProvider : MainAPI() {
         val post = app.get("$wpApiUrl/posts/$postId").parsedSafe<WPPost>()
             ?: throw ErrorLoadingException("Could not load post")
 
-        val title = post.title.rendered.cleanHtml()
-        val description = post.excerpt.rendered.cleanHtml()
-        val posterUrl = getMediaUrl(post.featured_media)
+        val title = post.getTitleRendered().cleanHtml()
+        val description = post.getExcerptRendered().cleanHtml()
+        val posterUrl = getMediaUrl(post.featured_media ?: 0)
 
         // Extract episode number from title if present (e.g., "#236" or "Episode 236")
         val episodeNumber = extractEpisodeNumber(title)
 
         // Parse video payloads from content
-        val payloads = parseDataPayloads(post.content.rendered)
+        val payloads = parseDataPayloads(post.getContentRendered())
 
         // Create data string containing all payloads
         val dataJson = payloads.joinToString("|||")
@@ -69,7 +69,7 @@ class FreeSidePlusProvider : MainAPI() {
         return newMovieLoadResponse(title, url, TvType.Movie, dataJson) {
             this.posterUrl = posterUrl
             this.plot = description
-            this.year = post.date.split("-").firstOrNull()?.toIntOrNull()
+            this.year = post.date?.split("-")?.firstOrNull()?.toIntOrNull()
         }
     }
 
@@ -190,30 +190,33 @@ class FreeSidePlusProvider : MainAPI() {
     }
 
     private suspend fun WPPost.toSearchResponse(): SearchResponse? {
-        val title = this.title.rendered.cleanHtml()
-        val posterUrl = getMediaUrl(this.featured_media)
+        val title = this.getTitleRendered().cleanHtml()
+        if (title.isEmpty()) return null
+        val posterUrl = getMediaUrl(this.featured_media ?: 0)
 
-        return newMovieSearchResponse(title, this.link, TvType.Movie) {
+        return newMovieSearchResponse(title, this.link ?: "", TvType.Movie) {
             this.posterUrl = posterUrl
         }
     }
 
-    // Data models
+    // Data models - using Map<String, Any?> for nested objects to avoid casting issues
     data class WPPost(
-        val id: Int,
-        val date: String,
-        val title: WPRendered,
-        val content: WPRendered,
-        val excerpt: WPRendered,
-        val link: String,
-        val featured_media: Int,
-        val categories: List<Int>
-    )
-
-    data class WPRendered(val rendered: String)
+        val id: Int? = null,
+        val date: String? = null,
+        val title: Map<String, Any?>? = null,
+        val content: Map<String, Any?>? = null,
+        val excerpt: Map<String, Any?>? = null,
+        val link: String? = null,
+        val featured_media: Int? = null,
+        val categories: List<Int>? = null
+    ) {
+        fun getTitleRendered(): String = title?.get("rendered")?.toString() ?: ""
+        fun getContentRendered(): String = content?.get("rendered")?.toString() ?: ""
+        fun getExcerptRendered(): String = excerpt?.get("rendered")?.toString() ?: ""
+    }
 
     data class WPMedia(
-        val id: Int,
-        val source_url: String
+        val id: Int? = null,
+        val source_url: String? = null
     )
 }

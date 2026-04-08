@@ -24,7 +24,7 @@ cloudstream {
     requiresResources = false
     language = "en"
 
-    iconUrl = "https://www.free-sideplus.com/wp-content/uploads/2026/03/cropped-free-sideplus-logo-192x192.png"
+    iconUrl = "https://www.free-sideplus.com/wp-content/uploads/2026/03/ontario-logo-dark-mode-2.webp"
 }
 
 android {
