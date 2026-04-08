@@ -1,0 +1,8 @@
+{
+    "name": "Free Side+ Repository",
+    "description": "CloudStream extensions for Sidemen Side+ content",
+    "manifestVersion": 1,
+    "pluginLists": [
+        "https://raw.githubusercontent.com/itsmeimad65/cs-itsmeimad/builds/plugins.json"
+    ]
+}
