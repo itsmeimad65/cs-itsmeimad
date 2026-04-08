@@ -11,7 +11,7 @@ class FreeSidePlusProvider : MainAPI() {
     override var name = "Free Side+"
     override val hasMainPage = true
     override var lang = "en"
-    override val supportedTypes = setOf(TvType.Movie)
+    override val supportedTypes = setOf(TvType.Others)
 
     private val wpApiUrl = "$mainUrl/wp-json/wp/v2"
 
@@ -26,7 +26,7 @@ class FreeSidePlusProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val categoryId = request.data
-        val response = app.get("$wpApiUrl/posts?categories=$categoryId&per_page=20&page=$page")
+        val response = app.get("$wpApiUrl/posts?categories=$categoryId&per_page=20&page=$page&_embed")
         val posts = parsePostList(response.text)
 
         val items = posts.mapNotNull { post ->
@@ -37,7 +37,7 @@ class FreeSidePlusProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val response = app.get("$wpApiUrl/posts?search=$query&per_page=50")
+        val response = app.get("$wpApiUrl/posts?search=$query&per_page=50&_embed")
         val posts = parsePostList(response.text)
 
         return posts.mapNotNull { it.toSearchResponse() }
@@ -47,18 +47,19 @@ class FreeSidePlusProvider : MainAPI() {
         // Extract post ID from URL
         val postId = url.split("/").filter { it.isNotEmpty() }.lastOrNull()?.let {
             // Try to get post by slug
-            val response = app.get("$wpApiUrl/posts?slug=$it")
+            val response = app.get("$wpApiUrl/posts?slug=$it&_embed")
             val posts = parsePostList(response.text)
             posts.firstOrNull()?.id
         } ?: throw ErrorLoadingException("Could not extract post ID")
 
-        val response = app.get("$wpApiUrl/posts/$postId")
+        val response = app.get("$wpApiUrl/posts/$postId?_embed")
         val post = parsePost(response.text)
             ?: throw ErrorLoadingException("Could not load post")
 
         val title = post.titleRendered.cleanHtml()
         val description = post.excerptRendered.cleanHtml()
-        val posterUrl = getMediaUrl(post.featured_media)
+        // Use embedded poster URL, or fallback to API call
+        val posterUrl = post.posterUrl ?: getMediaUrl(post.featured_media)
 
         // Extract episode number from title if present (e.g., "#236" or "Episode 236")
         val episodeNumber = extractEpisodeNumber(title)
@@ -69,7 +70,7 @@ class FreeSidePlusProvider : MainAPI() {
         // Create data string containing all payloads
         val dataJson = payloads.joinToString("|||")
 
-        return newMovieLoadResponse(title, url, TvType.Movie, dataJson) {
+        return newMovieLoadResponse(title, url, TvType.Others, dataJson) {
             this.posterUrl = posterUrl
             this.plot = description
             this.year = post.date.split("-").firstOrNull()?.toIntOrNull()
@@ -82,8 +83,12 @@ class FreeSidePlusProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        if (data.isEmpty()) return false
+        
         // data contains base64 payloads separated by |||
-        val payloads = data.split("|||")
+        val payloads = data.split("|||").filter { it.isNotEmpty() }
+        
+        if (payloads.isEmpty()) return false
 
         payloads.forEachIndexed { index, payload ->
             try {
@@ -93,22 +98,28 @@ class FreeSidePlusProvider : MainAPI() {
                 val dvtVideoUrl = String(Base64.getDecoder().decode(payload))
 
                 // Step 2: Request dvt_video URL to get iframe
-                val iframeDoc = app.get(
+                val iframeResponse = app.get(
                     dvtVideoUrl,
                     referer = mainUrl,
-                    headers = mapOf("User-Agent" to "Mozilla/5.0")
-                ).document
-
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                )
+                
+                val iframeDoc = iframeResponse.document
                 val iframeSrc = iframeDoc.selectFirst("iframe")?.attr("src") ?: return@forEachIndexed
 
-                // Step 3: Request iframe page to extract stream URL
-                val streamPageHtml = app.get(
+                // Step 3: Request iframe page to extract stream URL with timestamp and signature
+                val streamPageResponse = app.get(
                     iframeSrc,
                     referer = dvtVideoUrl,
-                    headers = mapOf("User-Agent" to "Mozilla/5.0")
-                ).text
+                    headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    )
+                )
+                val streamPageHtml = streamPageResponse.text
 
-                // Extract stream.php URL from JavaScript
+                // Extract stream.php URL from JavaScript (includes timestamp and signature)
                 val streamUrlRegex = """sourceElement\.src\s*=\s*["']([^"']+)["']""".toRegex()
                 val streamPath = streamUrlRegex.find(streamPageHtml)?.groupValues?.get(1) ?: return@forEachIndexed
 
@@ -120,34 +131,25 @@ class FreeSidePlusProvider : MainAPI() {
                     "$baseUrl/$streamPath"
                 }
 
-                // Step 4: Follow stream.php to get final video URL
-                val finalResponse = app.get(
-                    fullStreamUrl,
-                    referer = iframeSrc,
-                    allowRedirects = true,
-                    headers = mapOf("User-Agent" to "Mozilla/5.0")
-                )
-
-                val finalVideoUrl = finalResponse.url
-
-                // Step 5: Add the video link
-                val linkType = if (finalVideoUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                val link = newExtractorLink(
+                // The stream.php URL is a signed URL that should redirect to the actual video
+                // Add the link directly - CloudStream will handle the redirect
+                val link = ExtractorLink(
                     source = name,
                     name = "$name - $serverName",
-                    url = finalVideoUrl,
-                    type = linkType
-                ) {
-                    this.referer = baseUrl
-                    this.quality = Qualities.Unknown.value
-                }
+                    url = fullStreamUrl,
+                    referer = iframeSrc,
+                    quality = Qualities.Unknown.value,
+                    isM3u8 = false
+                )
                 callback.invoke(link)
+                
             } catch (e: Exception) {
-                // Continue to next server if this one fails
+                // Log error but continue to next server
+                e.printStackTrace()
             }
         }
 
-        return true
+        return payloads.isNotEmpty()
     }
 
     // Helper functions
@@ -171,6 +173,17 @@ class FreeSidePlusProvider : MainAPI() {
     }
 
     private fun jsonObjectToWPPost(obj: JSONObject): WPPost {
+        // Try to get embedded thumbnail URL first (faster, no extra API call)
+        val embeddedPosterUrl = try {
+            obj.optJSONObject("_embedded")
+                ?.optJSONArray("wp:featuredmedia")
+                ?.optJSONObject(0)
+                ?.optString("source_url")
+                ?.ifEmpty { null }
+        } catch (e: Exception) {
+            null
+        }
+        
         return WPPost(
             id = obj.optInt("id"),
             date = obj.optString("date"),
@@ -178,7 +191,8 @@ class FreeSidePlusProvider : MainAPI() {
             contentRendered = obj.optJSONObject("content")?.optString("rendered") ?: "",
             excerptRendered = obj.optJSONObject("excerpt")?.optString("rendered") ?: "",
             link = obj.optString("link"),
-            featured_media = obj.optInt("featured_media")
+            featured_media = obj.optInt("featured_media"),
+            posterUrl = embeddedPosterUrl
         )
     }
 
@@ -224,13 +238,12 @@ class FreeSidePlusProvider : MainAPI() {
             .trim()
     }
 
-    private suspend fun WPPost.toSearchResponse(): SearchResponse? {
+    private fun WPPost.toSearchResponse(): SearchResponse? {
         val title = this.titleRendered.cleanHtml()
         if (title.isEmpty()) return null
-        val posterUrl = getMediaUrl(this.featured_media)
 
-        return newMovieSearchResponse(title, this.link, TvType.Movie) {
-            this.posterUrl = posterUrl
+        return newMovieSearchResponse(title, this.link, TvType.Others) {
+            this.posterUrl = this@toSearchResponse.posterUrl
         }
     }
 
@@ -242,6 +255,7 @@ class FreeSidePlusProvider : MainAPI() {
         val contentRendered: String,
         val excerptRendered: String,
         val link: String,
-        val featured_media: Int
+        val featured_media: Int,
+        val posterUrl: String? = null
     )
 }
