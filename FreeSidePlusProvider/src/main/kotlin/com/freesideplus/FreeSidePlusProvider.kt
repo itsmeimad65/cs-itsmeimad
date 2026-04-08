@@ -96,66 +96,85 @@ class FreeSidePlusProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.isEmpty()) return false
+        if (data.isEmpty()) return true // Always return true like CricifyProvider
         
         // data contains base64 payloads separated by |||
         val payloads = data.split("|||").filter { it.isNotEmpty() }
         
-        if (payloads.isEmpty()) return false
+        if (payloads.isEmpty()) return true // Always return true like CricifyProvider
 
-        var foundValidLinks = false
+        // Default headers for all requests - build once, reuse everywhere
+        val defaultHeaders = mapOf(
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
 
+        // Process each server independently - failures don't affect other servers
         payloads.forEachIndexed { index, payload ->
             try {
                 val serverName = "Server ${index + 1}"
                 
                 // Step 1: Decode base64 to get dvt_video URL
-                val dvtVideoUrl = String(Base64.getDecoder().decode(payload))
+                val dvtVideoUrl = try {
+                    String(Base64.getDecoder().decode(payload.trim()))
+                } catch (e: Exception) {
+                    return@forEachIndexed // Skip invalid payload but continue with other servers
+                }
+
+                if (dvtVideoUrl.isEmpty() || !dvtVideoUrl.startsWith("http")) {
+                    return@forEachIndexed // Skip invalid URL but continue with other servers
+                }
 
                 // Step 2: Request dvt_video URL to get iframe (needs proper referer)
-                val iframeResponse = app.get(
-                    dvtVideoUrl,
-                    referer = "https://www.free-sideplus.com/",
-                    headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                val iframeResponse = try {
+                    app.get(
+                        dvtVideoUrl,
+                        referer = "https://www.free-sideplus.com/",
+                        headers = defaultHeaders
                     )
-                )
+                } catch (e: Exception) {
+                    return@forEachIndexed // Skip failed request but continue with other servers
+                }
                 
                 val iframeDoc = iframeResponse.document
-                val iframeSrc = iframeDoc.selectFirst("iframe")?.attr("src")
+                val iframeSrc = iframeDoc.selectFirst("iframe")?.attr("src")?.trim()
                 
-                if (iframeSrc.isNullOrEmpty()) {
-                    // Continue to next server if iframe not found
-                    return@forEachIndexed
+                if (iframeSrc.isNullOrEmpty() || !iframeSrc.startsWith("http")) {
+                    return@forEachIndexed // Skip if iframe not found but continue with other servers
                 }
 
                 // Step 3: Request iframe page to extract stream URL with timestamp and signature
-                val streamPageResponse = app.get(
-                    iframeSrc,
-                    referer = dvtVideoUrl,
-                    headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                val streamPageResponse = try {
+                    app.get(
+                        iframeSrc,
+                        referer = dvtVideoUrl,
+                        headers = defaultHeaders
                     )
-                )
+                } catch (e: Exception) {
+                    return@forEachIndexed // Skip failed request but continue with other servers
+                }
+                
                 val streamPageHtml = streamPageResponse.text
 
                 // Extract stream.php URL from JavaScript (includes timestamp and signature)
                 val streamUrlRegex = """sourceElement\.src\s*=\s*["']([^"']+)["']""".toRegex()
-                val streamPath = streamUrlRegex.find(streamPageHtml)?.groupValues?.get(1)
+                val streamPath = streamUrlRegex.find(streamPageHtml)?.groupValues?.get(1)?.trim()
                 
                 if (streamPath.isNullOrEmpty()) {
-                    // Continue to next server if stream URL not found
-                    return@forEachIndexed
+                    return@forEachIndexed // Skip if stream URL not found but continue with other servers
                 }
 
-                // Build full stream URL
+                // Build full stream URL - validate that we get a proper URL
                 val baseUrl = iframeSrc.substringBefore("/index.php")
                 val fullStreamUrl = if (streamPath.startsWith("http")) {
                     streamPath
                 } else {
                     "$baseUrl/$streamPath"
+                }
+
+                // Final validation - ensure we have a valid HTTP URL
+                if (!fullStreamUrl.startsWith("http") || fullStreamUrl.contains("localhost")) {
+                    return@forEachIndexed // Skip invalid URLs but continue with other servers
                 }
 
                 // Add the ExtractorLink - CloudStream will handle headers automatically
@@ -167,16 +186,21 @@ class FreeSidePlusProvider : MainAPI() {
                     )
                 )
                 
-                foundValidLinks = true
-                
             } catch (e: Exception) {
-                // Log error but continue to next server
-                e.printStackTrace()
-                // Continue processing other servers even if this one fails
+                // Log error but continue processing other servers
+                // This follows CricifyProvider's pattern of graceful error handling
+                try {
+                    e.printStackTrace()
+                } catch (ignored: Exception) {
+                    // Even error logging can fail, but we continue
+                }
+                // Continue processing other servers even if this one fails completely
             }
         }
 
-        return foundValidLinks
+        // Always return true like CricifyProvider - this allows CloudStream to continue
+        // processing even if some/all servers fail, providing better user experience
+        return true
     }
 
     // Helper functions
