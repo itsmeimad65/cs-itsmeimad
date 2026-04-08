@@ -11,7 +11,7 @@ class FreeSidePlusProvider : MainAPI() {
     override var name = "Free Side+"
     override val hasMainPage = true
     override var lang = "en"
-    override val supportedTypes = setOf(TvType.TvSeries)
+    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
 
     private val wpApiUrl = "$mainUrl/wp-json/wp/v2"
 
@@ -68,6 +68,9 @@ class FreeSidePlusProvider : MainAPI() {
 
         // Extract episode number from title if present (e.g., "#236" or "Episode 236")
         val episodeNumber = extractEpisodeNumber(title)
+        
+        // Determine content type based on title and category
+        val contentType = determineContentType(title, post)
 
         // Parse video payloads from content
         val payloads = parseDataPayloads(post.contentRendered)
@@ -75,7 +78,7 @@ class FreeSidePlusProvider : MainAPI() {
         // Create data string containing all payloads
         val dataJson = payloads.joinToString("|||")
 
-        return newMovieLoadResponse(title, url, TvType.TvSeries, dataJson) {
+        return newMovieLoadResponse(title, url, contentType, dataJson) {
             this.posterUrl = posterUrl
             this.plot = description
             this.year = post.date.split("-").firstOrNull()?.toIntOrNull()
@@ -245,9 +248,43 @@ class FreeSidePlusProvider : MainAPI() {
         val title = this.titleRendered.cleanHtml()
         if (title.isEmpty()) return null
 
-        return newMovieSearchResponse(title, this.link, TvType.TvSeries) {
+        val contentType = determineContentType(title, this)
+        
+        return newMovieSearchResponse(title, this.link, contentType) {
             this.posterUrl = this@toSearchResponse.posterUrl
         }
+    }
+
+    private fun determineContentType(title: String, post: WPPost): TvType {
+        // Check for episode indicators
+        val episodeIndicators = listOf(
+            "#\\d+".toRegex(),                    // #123
+            "Episode\\s+\\d+".toRegex(RegexOption.IGNORE_CASE), // Episode 123
+            "Ep\\s+\\d+".toRegex(RegexOption.IGNORE_CASE),      // Ep 123
+            "E\\d+".toRegex(),                    // E123
+            "Part\\s+\\d+".toRegex(RegexOption.IGNORE_CASE),    // Part 1
+            "Chapter\\s+\\d+".toRegex(RegexOption.IGNORE_CASE) // Chapter 1
+        )
+        
+        // Check if title contains episode indicators (treat as TV series)
+        if (episodeIndicators.any { it.containsMatchIn(title) }) {
+            return TvType.TvSeries
+        }
+        
+        // Check for movie keywords
+        val movieKeywords = listOf("movie", "film", "documentary", "special", "behind the scenes")
+        if (movieKeywords.any { title.contains(it, ignoreCase = true) }) {
+            return TvType.Movie
+        }
+        
+        // Check for series keywords (default for most Side+ content)
+        val seriesKeywords = listOf("sidecast", "inside", "bts", "saturday")
+        if (seriesKeywords.any { title.contains(it, ignoreCase = true) }) {
+            return TvType.TvSeries
+        }
+        
+        // Default to TvSeries for Side+ content (most content is episodic)
+        return TvType.TvSeries
     }
 
     // Data model
