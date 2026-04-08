@@ -133,16 +133,13 @@ class FreeSidePlusProvider : MainAPI() {
 
                 // The stream.php URL is a signed URL that should redirect to the actual video
                 // Add the link directly - CloudStream will handle the redirect
-                val link = newExtractorLink(
-                    source = name,
-                    name = "$name - $serverName",
-                    url = fullStreamUrl,
-                    type = ExtractorLinkType.VIDEO
-                ) {
-                    this.referer = iframeSrc
-                    this.quality = Qualities.Unknown.value
-                }
-                callback.invoke(link)
+                callback.invoke(
+                    newExtractorLink(
+                        source = name,
+                        name = "$name - $serverName",
+                        url = fullStreamUrl
+                    )
+                )
                 
             } catch (e: Exception) {
                 // Log error but continue to next server
