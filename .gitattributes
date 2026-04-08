@@ -1,0 +1,9 @@
+# Set default behavior to automatically normalize line endings
+* text=auto
+
+# Force Unix line endings for shell scripts
+*.sh text eol=lf
+gradlew text eol=lf
+
+# Force Windows line endings for batch files
+*.bat text eol=crlf
