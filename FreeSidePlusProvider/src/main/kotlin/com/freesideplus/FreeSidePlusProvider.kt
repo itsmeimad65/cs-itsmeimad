@@ -16,17 +16,25 @@ class FreeSidePlusProvider : MainAPI() {
     private val wpApiUrl = "$mainUrl/wp-json/wp/v2"
 
     override val mainPage = mainPageOf(
+        "" to "Latest",            // All posts (no category filter)
         "41" to "Sidecast",
         "43" to "Side+ Saturdays",
+        "42" to "BTS",
         "44" to "Inside",
         "53" to "Inside Out",
-        "42" to "BTS",
         "32" to "1v100"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val categoryId = request.data
-        val response = app.get("$wpApiUrl/posts?categories=$categoryId&per_page=20&page=$page&_embed")
+        val apiUrl = if (categoryId.isEmpty()) {
+            // Latest - get all posts without category filter
+            "$wpApiUrl/posts?per_page=20&page=$page&_embed"
+        } else {
+            // Specific category
+            "$wpApiUrl/posts?categories=$categoryId&per_page=20&page=$page&_embed"
+        }
+        val response = app.get(apiUrl)
         val posts = parsePostList(response.text)
 
         val items = posts.mapNotNull { post ->
@@ -95,6 +103,8 @@ class FreeSidePlusProvider : MainAPI() {
         
         if (payloads.isEmpty()) return false
 
+        var foundValidLinks = false
+
         payloads.forEachIndexed { index, payload ->
             try {
                 val serverName = "Server ${index + 1}"
@@ -113,7 +123,12 @@ class FreeSidePlusProvider : MainAPI() {
                 )
                 
                 val iframeDoc = iframeResponse.document
-                val iframeSrc = iframeDoc.selectFirst("iframe")?.attr("src") ?: return@forEachIndexed
+                val iframeSrc = iframeDoc.selectFirst("iframe")?.attr("src")
+                
+                if (iframeSrc.isNullOrEmpty()) {
+                    // Continue to next server if iframe not found
+                    return@forEachIndexed
+                }
 
                 // Step 3: Request iframe page to extract stream URL with timestamp and signature
                 val streamPageResponse = app.get(
@@ -128,7 +143,12 @@ class FreeSidePlusProvider : MainAPI() {
 
                 // Extract stream.php URL from JavaScript (includes timestamp and signature)
                 val streamUrlRegex = """sourceElement\.src\s*=\s*["']([^"']+)["']""".toRegex()
-                val streamPath = streamUrlRegex.find(streamPageHtml)?.groupValues?.get(1) ?: return@forEachIndexed
+                val streamPath = streamUrlRegex.find(streamPageHtml)?.groupValues?.get(1)
+                
+                if (streamPath.isNullOrEmpty()) {
+                    // Continue to next server if stream URL not found
+                    return@forEachIndexed
+                }
 
                 // Build full stream URL
                 val baseUrl = iframeSrc.substringBefore("/index.php")
@@ -147,13 +167,16 @@ class FreeSidePlusProvider : MainAPI() {
                     )
                 )
                 
+                foundValidLinks = true
+                
             } catch (e: Exception) {
                 // Log error but continue to next server
                 e.printStackTrace()
+                // Continue processing other servers even if this one fails
             }
         }
 
-        return payloads.isNotEmpty()
+        return foundValidLinks
     }
 
     // Helper functions
