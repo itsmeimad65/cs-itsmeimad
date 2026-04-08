@@ -33,7 +33,12 @@ class FreeSidePlusProvider : MainAPI() {
             post.toSearchResponse()
         }
 
-        return newHomePageResponse(request.name, items, hasNext = items.size >= 20)
+        val homePageList = HomePageList(
+            name = request.name,
+            list = items,
+            isHorizontalImages = true
+        )
+        return newHomePageResponse(arrayListOf(homePageList), hasNext = items.size >= 20)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
