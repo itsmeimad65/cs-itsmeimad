@@ -19,7 +19,7 @@ cloudstream {
     **/
     status = 1
 
-    tvTypes = listOf("TvSeries", "Movie")
+    tvTypes = listOf("Movie")
 
     requiresResources = false
     language = "en"

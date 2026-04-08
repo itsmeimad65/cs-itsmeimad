@@ -11,7 +11,7 @@ class FreeSidePlusProvider : MainAPI() {
     override var name = "Free Side+"
     override val hasMainPage = true
     override var lang = "en"
-    override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
+    override val supportedTypes = setOf(TvType.Movie)
 
     private val wpApiUrl = "$mainUrl/wp-json/wp/v2"
 
@@ -66,11 +66,8 @@ class FreeSidePlusProvider : MainAPI() {
         // Use embedded poster URL, or fallback to API call
         val posterUrl = post.posterUrl ?: getMediaUrl(post.featured_media)
 
-        // Extract episode number from title if present (e.g., "#236" or "Episode 236")
-        val episodeNumber = extractEpisodeNumber(title)
-        
-        // Determine content type based on title and category
-        val contentType = determineContentType(title, post)
+        // All content is treated as movies (standalone videos)
+        val contentType = TvType.Movie
 
         // Parse video payloads from content
         val payloads = parseDataPayloads(post.contentRendered)
@@ -105,12 +102,13 @@ class FreeSidePlusProvider : MainAPI() {
                 // Step 1: Decode base64 to get dvt_video URL
                 val dvtVideoUrl = String(Base64.getDecoder().decode(payload))
 
-                // Step 2: Request dvt_video URL to get iframe
+                // Step 2: Request dvt_video URL to get iframe (needs proper referer)
                 val iframeResponse = app.get(
                     dvtVideoUrl,
-                    referer = mainUrl,
+                    referer = "https://www.free-sideplus.com/",
                     headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                     )
                 )
                 
@@ -122,7 +120,8 @@ class FreeSidePlusProvider : MainAPI() {
                     iframeSrc,
                     referer = dvtVideoUrl,
                     headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
                     )
                 )
                 val streamPageHtml = streamPageResponse.text
@@ -139,8 +138,7 @@ class FreeSidePlusProvider : MainAPI() {
                     "$baseUrl/$streamPath"
                 }
 
-                // The stream.php URL is a signed URL that should redirect to the actual video
-                // Add the link directly - CloudStream will handle the redirect
+                // Add the ExtractorLink - CloudStream will handle headers automatically
                 callback.invoke(
                     newExtractorLink(
                         source = name,
@@ -218,24 +216,6 @@ class FreeSidePlusProvider : MainAPI() {
         return regex.findAll(htmlContent).map { it.groupValues[1] }.toList()
     }
 
-    private fun extractEpisodeNumber(title: String): Int? {
-        // Try to extract episode number from patterns like "#236" or "Episode 236"
-        val patterns = listOf(
-            """#(\d+)""".toRegex(),
-            """Episode\s+(\d+)""".toRegex(RegexOption.IGNORE_CASE),
-            """Ep\s+(\d+)""".toRegex(RegexOption.IGNORE_CASE),
-            """E(\d+)""".toRegex()
-        )
-
-        for (pattern in patterns) {
-            val match = pattern.find(title)
-            if (match != null) {
-                return match.groupValues[1].toIntOrNull()
-            }
-        }
-        return null
-    }
-
     private fun String.cleanHtml(): String {
         return this.replace("<[^>]*>".toRegex(), "")
             .replace("&#8211;", "-")
@@ -248,43 +228,11 @@ class FreeSidePlusProvider : MainAPI() {
         val title = this.titleRendered.cleanHtml()
         if (title.isEmpty()) return null
 
-        val contentType = determineContentType(title, this)
+        val contentType = TvType.Movie
         
         return newMovieSearchResponse(title, this.link, contentType) {
             this.posterUrl = this@toSearchResponse.posterUrl
         }
-    }
-
-    private fun determineContentType(title: String, post: WPPost): TvType {
-        // Check for episode indicators
-        val episodeIndicators = listOf(
-            "#\\d+".toRegex(),                    // #123
-            "Episode\\s+\\d+".toRegex(RegexOption.IGNORE_CASE), // Episode 123
-            "Ep\\s+\\d+".toRegex(RegexOption.IGNORE_CASE),      // Ep 123
-            "E\\d+".toRegex(),                    // E123
-            "Part\\s+\\d+".toRegex(RegexOption.IGNORE_CASE),    // Part 1
-            "Chapter\\s+\\d+".toRegex(RegexOption.IGNORE_CASE) // Chapter 1
-        )
-        
-        // Check if title contains episode indicators (treat as TV series)
-        if (episodeIndicators.any { it.containsMatchIn(title) }) {
-            return TvType.TvSeries
-        }
-        
-        // Check for movie keywords
-        val movieKeywords = listOf("movie", "film", "documentary", "special", "behind the scenes")
-        if (movieKeywords.any { title.contains(it, ignoreCase = true) }) {
-            return TvType.Movie
-        }
-        
-        // Check for series keywords (default for most Side+ content)
-        val seriesKeywords = listOf("sidecast", "inside", "bts", "saturday")
-        if (seriesKeywords.any { title.contains(it, ignoreCase = true) }) {
-            return TvType.TvSeries
-        }
-        
-        // Default to TvSeries for Side+ content (most content is episodic)
-        return TvType.TvSeries
     }
 
     // Data model
