@@ -137,9 +137,11 @@ class FreeSidePlusProvider : MainAPI() {
                     source = name,
                     name = "$name - $serverName",
                     url = fullStreamUrl,
-                    referer = iframeSrc,
-                    quality = Qualities.Unknown.value
-                )
+                    type = ExtractorLinkType.VIDEO
+                ) {
+                    this.referer = iframeSrc
+                    this.quality = Qualities.Unknown.value
+                }
                 callback.invoke(link)
                 
             } catch (e: Exception) {
