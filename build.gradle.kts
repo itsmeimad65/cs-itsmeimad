@@ -15,7 +15,7 @@ buildscript {
         classpath("com.android.tools.build:gradle:8.7.3")
         // Cloudstream gradle plugin which makes everything work and builds plugins
         classpath("com.github.recloudstream:gradle:-SNAPSHOT")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.0")
     }
 }
 
@@ -38,11 +38,11 @@ subprojects {
 
     cloudstream {
         // when running through github workflow, GITHUB_REPOSITORY should contain current repository name
-        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "user/repo")
+        setRepo(System.getenv("GITHUB_REPOSITORY") ?: "itsmeimad65/cs-itsmeimad")
     }
 
     android {
-        namespace = "com.example"
+        namespace = "com.freesideplus"
 
         defaultConfig {
             minSdk = 21
@@ -63,6 +63,7 @@ subprojects {
                     "-Xno-param-assertions",
                     "-Xno-receiver-assertions"
                 )
+                allWarningsAsErrors.set(false)
             }
         }
     }
